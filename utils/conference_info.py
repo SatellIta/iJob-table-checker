@@ -1,5 +1,10 @@
 from dataclasses import dataclass
 
+'''
+定义了conference类,读取数据并保存到类属性的方法暂时还在
+read_docx.py 及 read_url.py 两个文件中
+'''
+
 @dataclass
 class Conference:
     index: int
@@ -8,20 +13,4 @@ class Conference:
     date: str
     time: str
     detail: str
-
-    @classmethod
-    def from_row(cls, row_data):
-        '''
-        从没有表格只有段落的数据创建Conference对象
-        其中段落数据是根据ijob宣讲信息定制的
-        '''
-        
-
-        return cls(
-            index = 
-            title = 
-            place = 
-            date = 
-            time = 
-            detail = 
-        )
+    

@@ -1,6 +1,6 @@
 from docx import Document
-from PySide6.QtWidgets import QMessageBox
-from conference_info import Conference
+from .conference_info import Conference
+from UI.some_dialog import FailFileMessage
 import os, re
 
 def open_document(file_path):
@@ -24,77 +24,93 @@ def open_document(file_path):
         return doc
         
     except Exception as e:
-        oops = QMessageBox()
-        oops.setWindowTitle(" ")
-        oops.setText(f"无法打开文件: {os.path.basename(file_path)}")
-        oops.setInformativeText(f"错误原因: {str(e)}")
-        oops.setStandardButtons(QMessageBox.Ok)
-        oops.setIcon(QMessageBox.Warning)
+        
+        oops = FailFileMessage(None, str(os.path.basename(file_path)), str(e))
         oops.exec()
         return None
 
-# 读取所有宣讲会的信息函数
-def read_document(doc):
-    row_data = []
-    for line in doc.paragraphs:
-        if line.text.strip():
-            row_data.append(line)
-        else:
-            continue
-
-    return row_data
-
 # 传入doc文件,创建并返回所有包含所有宣讲会的列表
 def storage_info(doc):
-    row_data = read_document(doc)
+    doc = remove_headers(doc)   # 清除页眉
+    row_data = read_document(doc)  # 读取行数据
+    grouped_data = group_by_conference(row_data)   # 自动查找宣讲会个数n，将行数据改写成n个字典
     conferences = []
-    current_conference = None
-    conference_data = []
-    pattern = re.compile(r'No\.\s*(\d+)')  # 匹配"No.数字"模式
     
-    for i, paragraph in enumerate(row_data):
-        text = paragraph.text.strip()
-        match = pattern.search(text)
-        
-        if match:
-            # 找到新的会议编号，如果已有会议信息则先保存
-            if current_conference is not None and conference_data:
-                # 创建会议对象并添加到列表
-                conf = create_conference(current_conference, conference_data)
-                if conf:
-                    conferences.append(conf)
-                # 清空当前会议数据
-                conference_data = []
-            
-            # 提取会议编号
-            current_conference = int(match.group(1))
-            # 保存当前行，可能包含会议标题
-            conference_data.append(text)
-        elif current_conference is not None:
-            # 继续收集当前会议的信息
-            conference_data.append(text)
-    
-    # 处理最后一个会议
-    if current_conference is not None and conference_data:
-        conf = create_conference(current_conference, conference_data)
-        if conf:
+    for index, text in grouped_data.items():
+        conf = create_conference(index, text)
+        if conf:    
             conferences.append(conf)
     
     return conferences
 
-def create_conference(index, data_lines):
+# 清除页眉
+def remove_headers(doc):
+    """
+    删除Word文档中的所有页眉
+    
+    args:
+        doc: Document对象
+    """
+    for section in doc.sections:
+        # 断开页眉与上一节的链接
+        section.header.is_linked_to_previous = False
+        
+        # 清空页眉中的所有段落
+        for paragraph in section.header.paragraphs:
+            for run in paragraph.runs:
+                run.text = ""
+    
+    return doc
+
+# 读取doc中所有行信息的函数
+def read_document(doc):
+    row_data = []
+    if doc.paragraphs:
+        for line in doc.paragraphs:
+            #line.text.strip()用于消除一行中开头和结尾多余的空白字符,这里起判断是否为空行的作用
+            if line.text.strip():       
+                row_data.append(line)
+            else:
+                continue
+    else:
+        print(doc)
+
+    return row_data
+
+# 自动查找宣讲会个数n，将行数据改写成n个字典,每个字典包含该宣讲会所有的行
+def group_by_conference(row_data):
+    grouped_data = {}
+    pattern = re.compile(r'No\.\s*(\d+)')  # 匹配"No.数字"模式
+    current_index = None
+
+    for row in row_data:
+        text = row.text.strip()  #这里是清除多余空白字符
+        match = pattern.search(text)
+
+        if match:
+            current_index = int(match.group(1)) # 提取捕获组，得到正确的宣讲会编号
+            if current_index not in grouped_data:
+                grouped_data[current_index] = []
+
+        if current_index is not None:
+            grouped_data[current_index].append(text)
+
+    return grouped_data
+
+
+def create_conference(index, text):
     """
     从收集的文本行创建Conference对象
     
     参数:
         index: 会议编号
-        data_lines: 会议相关的文本行列表
+        text: 会议相关的文本行列表
     """
-    if not data_lines:
+    if not text:
         return None
     
-    # 基本处理逻辑 - 根据实际文档格式调整
-    title = data_lines[0]  # 假设第一行包含标题
+    # 解析标题
+    title = text[0]  
     
     # 尝试解析地点、日期和时间
     place = ""
@@ -103,37 +119,36 @@ def create_conference(index, data_lines):
     detail = ""
     
     # 寻找含有地点的行
-    place_pattern = re.compile(r'地\s*点[:：]\s*(.*)', re.IGNORECASE)
+    place_pattern = re.compile(r'宣讲地点[:：]\s*(.*)', re.IGNORECASE)
     # 寻找含有日期的行
-    date_pattern = re.compile(r'日\s*期[:：]\s*(.*)', re.IGNORECASE)
+    date_pattern = re.compile(r'\d{4}-\d{2}-\d{2}', re.IGNORECASE)
     # 寻找含有时间的行
-    time_pattern = re.compile(r'时\s*间[:：]\s*(.*)', re.IGNORECASE)
+    time_pattern = re.compile(r'\d{2}:\d{2}-\d{2}:\d{2}', re.IGNORECASE)
+    # 寻找含有详情的行
+    detail_pattern = re.compile(r'宣讲详情[：:]\s*(.*)')
     
-    for line in data_lines[1:]:  # 跳过标题行
+    for line in text[1:]:  # 跳过标题行
         # 检查地点
         place_match = place_pattern.search(line)
         if place_match:
             place = place_match.group(1).strip()
-            continue
             
         # 检查日期
         date_match = date_pattern.search(line)
         if date_match:
-            date = date_match.group(1).strip()
-            continue
+            date = date_match.group(0).strip()
             
         # 检查时间
         time_match = time_pattern.search(line)
         if time_match:
-            time = time_match.group(1).strip()
-            continue
+            time = time_match.group(0).strip()
             
         # 其他行作为详情
-        if detail:
-            detail += "\n" + line
-        else:
-            detail = line
-    
+        detail_match = detail_pattern.search(str(text))
+        if detail_match:
+            detail = detail_match.group(1).strip()
+            detail = detail[ :-2]    # 去掉列表强转list的最后的"']"字符串
+
     # 创建并返回Conference对象
     return Conference(
         index=index,
